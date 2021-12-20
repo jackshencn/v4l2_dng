@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < width * height; i++) {
             // Left justified 16 bit pixel
             unsigned short pix_val = __bswap_16(raw_buf[i]) >> 4;
-            hist[pix_val >> 4]++;
+            hist[pix_val]++;
             raw_buf[i] = pix_val;
         }
         int jpeg_size = lossless_jpg(raw_buf, out_buf, bitdepth, width, height);
