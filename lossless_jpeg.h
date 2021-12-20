@@ -62,7 +62,10 @@ unsigned char nums_bits(unsigned short * val) {
 int lossless_jpg(unsigned short * raw_buf, unsigned char * out_buf, unsigned short bitdepth,
         unsigned short width, unsigned short height) {
     unsigned int dpcm_hist[17] = {0}; // Reserved for 16 bit
-    unsigned short prev_line[2] = {2048, 2048};
+    unsigned short prev_line[2];
+    unsigned short default_predictor = 1 << (bitdepth - 1);
+    prev_line[0] = default_predictor;
+    prev_line[1] = default_predictor;
     unsigned short predictor[2];
     unsigned char * dpcm_len = malloc(width * height);
     for (int y = 0; y < height; y++) {
@@ -86,6 +89,7 @@ int lossless_jpg(unsigned short * raw_buf, unsigned char * out_buf, unsigned sho
     unsigned short huff_codes[17];
     update_huffman_tree(bitdepth, JPG_HEADER + 23, dpcm_hist, huff_codes, huff_lens);
 
+#ifdef HUFFMAN_DEBUG
     puts("Diff\tCounts\tHuf_len\tHuffman Code");
     unsigned int total_bits = 0;
     for (int i = 0; i <= bitdepth; i++) {
@@ -106,6 +110,7 @@ int lossless_jpg(unsigned short * raw_buf, unsigned char * out_buf, unsigned sho
 
     printf("\nSize: %i Ratio: %f%%\n", total_bits >> 3,
         total_bits * 100.0/(width * height * bitdepth));
+#endif
 
     update_jpg_header(width, height, bitdepth);
     int stream_idx = sizeof(JPG_HEADER) + bitdepth - 16;

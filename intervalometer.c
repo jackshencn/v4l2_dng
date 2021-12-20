@@ -40,10 +40,20 @@ void update_dng_header(unsigned short width, unsigned short height, unsigned cha
 }
 
 const char V4L2_LAUNCH[64] = "stdbuf -o0 v4l2-ctl -d /dev/video0 --stream-mmap --stream-to=-";
-const char V4L2_VBLANK[64] = "v4l2-ctl -d /dev/video0 --set-ctrl=exposure=";
+const char V4L2_SET_EXP[64] = "v4l2-ctl -d /dev/video0 --set-ctrl=exposure=";
+const char V4L2_GET_EXP[64] = "v4l2-ctl -d /dev/video0 --get-ctrl=exposure";
 
 #define TARGET_EXPOSURE 4000
 #define LINE_TIME 14.81
+
+int get_exposure_value() {
+    FILE * v4l2_exec = popen(V4L2_GET_EXP, "r");
+    int result;
+    fscanf(v4l2_exec, "exposure: %i\n", &result);
+    pclose(v4l2_exec);
+    printf("exp: %i\n", result);
+    return result;
+}
 
 int main(int argc, char **argv) {
     int res;
@@ -58,7 +68,7 @@ int main(int argc, char **argv) {
     unsigned int hist[4096];
     char dng_fname[64];
 
-    unsigned int exposure_rows = 500;
+    unsigned int exposure_rows = get_exposure_value();
     int one_thousandths = width * height / frac;
     bool set_exposure = false;
     while (1) {
@@ -114,9 +124,10 @@ int main(int argc, char **argv) {
             set_exposure = true;
             printf("Set exposure %u\n", exposure_rows);
             char v4l2_exp_cmd[64];
-            sprintf(v4l2_exp_cmd, "%s%u", V4L2_VBLANK, exposure_rows);
+            sprintf(v4l2_exp_cmd, "%s%u", V4L2_SET_EXP, exposure_rows);
             FILE * v4l2_exec = popen(v4l2_exp_cmd, "r");
             pclose(v4l2_exec);
+            exposure_rows = get_exposure_value();
         } else {
             set_exposure = false;
         }
