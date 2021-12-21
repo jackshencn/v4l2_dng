@@ -31,7 +31,7 @@ void update_dng_header(unsigned short width, unsigned short height, unsigned cha
     *(unsigned short*) (DNG_HEADER + 0x72) = height;
     DNG_HEADER[0x7E] = bitdepth;
     // Black level
-    *(unsigned short*) (DNG_HEADER + 0xEA) = 180;
+    *(unsigned short*) (DNG_HEADER + 0xEA) = 15;
     // White level
     *(unsigned short*) (DNG_HEADER + 0xF6) = (1 << bitdepth) - 1;
     if (comp) {
@@ -55,6 +55,9 @@ int main(int argc, char **argv) {
     fread(raw_buf, sizeof(unsigned short), width * height, raw_file);
     unsigned char * out_buf = malloc((width * height * bitdepth) >> 3);
 
+    for (int i = 0; i < width * height; i++) {
+        raw_buf[i] = __bswap_16(raw_buf[i]) >> 4;
+    }
     int jpeg_size = lossless_jpg(raw_buf, out_buf, bitdepth, width, height);
     free(raw_buf);
 
