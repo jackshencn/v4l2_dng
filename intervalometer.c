@@ -67,6 +67,7 @@ int main(int argc, char **argv) {
     unsigned char * out_buf = malloc((width * height * bitdepth) >> 3);
     unsigned int hist[4096];
     char dng_fname[64];
+    unsigned int max_exposure = 110500;
 
     unsigned int exposure_rows = get_exposure_value();
     int one_thousandths = width * height / frac;
@@ -118,8 +119,8 @@ int main(int argc, char **argv) {
             } else {
                 exposure_rows = (unsigned int) (exposure_rows * TARGET_EXPOSURE / total_val);
             }
-            if (exposure_rows >= (1 << 20)) {
-                exposure_rows = (1 << 20) - 1;
+            if (exposure_rows >= max_exposure) {
+                exposure_rows = max_exposure - 1;
             }
             set_exposure = true;
             printf("Set exposure %u\n", exposure_rows);
