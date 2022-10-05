@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "lossless_jpeg.h"
+#include "v4l2_ops.h"
 
 unsigned char DNG_HEADER[256] = {
     0x49,0x49,0x2A,0x00,0x08,0x00,0x00,0x00,0x04,0x00,0x12,0xC6,0x01,0x00,0x04,0x00,
@@ -39,52 +40,102 @@ void update_dng_header(unsigned short width, unsigned short height, unsigned cha
     *(unsigned short*) (DNG_HEADER + 0xF6) = (1 << bitdepth) - 1;
 }
 
-const char V4L2_LAUNCH[64] = "stdbuf -o0 v4l2-ctl -d /dev/video0 --stream-mmap --stream-to=-";
-const char V4L2_SET_EXP[64] = "v4l2-ctl -d /dev/video0 --set-ctrl=exposure=";
-const char V4L2_GET_EXP[64] = "v4l2-ctl -d /dev/video0 --get-ctrl=exposure";
-
 #define TARGET_EXPOSURE 4000
 #define LINE_TIME 14.81
 
-int get_exposure_value() {
-    FILE * v4l2_exec = popen(V4L2_GET_EXP, "r");
-    int result;
-    fscanf(v4l2_exec, "exposure: %i\n", &result);
-    pclose(v4l2_exec);
-    printf("exp: %i\n", result);
-    return result;
-}
 
 int main(int argc, char **argv) {
     int res;
+    unsigned char bitdepth = 12;
     unsigned short width, height;
     width = atoi(argv[1]);
     height = atoi(argv[2]);
-    unsigned char bitdepth = atoi(argv[3]);
+    float frame_gap = atof(argv[3]);
     unsigned int frac = atoi(argv[4]);
-    FILE * v4l2_pipe = popen(V4L2_LAUNCH, "r");
+    int v4l2_fd = v4l2_open_device("/dev/video5");
+    if (!v4l2_fd) {
+        return -1;
+    }
+
+    if (v4l2_init_device(v4l2_fd, width, height)) {
+        close(v4l2_fd);
+        return -1;
+    }
+
+    unsigned int max_exposure = (unsigned int)(frame_gap * 2210 * 51);
+    unsigned int vblk = max_exposure - height;
+    v4l2_set_ctrl(v4l2_fd, V4L2_CID_VBLANK, vblk);
+
+    membuf_t membuf[3];
+    if (v4l2_init_mmap(v4l2_fd, membuf)) {
+        close(v4l2_fd);
+        return -1;
+    }
+
     unsigned short * raw_buf = malloc(width * height * sizeof(unsigned short));
     unsigned char * out_buf = malloc((width * height * bitdepth) >> 3);
     unsigned int hist[4096];
     char dng_fname[64];
-    unsigned int max_exposure = 110500;
 
-    unsigned int exposure_rows = get_exposure_value();
+    unsigned int exposure_rows;
+    v4l2_get_ctrl(v4l2_fd, V4L2_CID_EXPOSURE, &exposure_rows);
     int one_thousandths = width * height / frac;
     bool set_exposure = false;
+
+    v4l2_start_capturing(v4l2_fd);
+
+    // Begin V4L2 operation
+    struct v4l2_plane planes[1];
+    struct v4l2_buffer buf;
+    CLEAR(buf);
+
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    buf.memory = V4L2_MEMORY_MMAP;
+    buf.m.planes = planes;
+    buf.length = 1;
     while (1) {
-        fread(raw_buf, sizeof(unsigned short), width * height, v4l2_pipe);
+        fd_set fds;
+        struct timeval tv;
+        int r;
+
+        FD_ZERO(&fds);
+        FD_SET(v4l2_fd, &fds);
+
+        /* Timeout. */
+        tv.tv_sec = (unsigned int) frame_gap;
+        tv.tv_usec = (unsigned int) (frame_gap * 1000000) % 1000000;
+
+        r = select(v4l2_fd + 1, &fds, NULL, NULL, &tv);
+        if (0 == r) {
+            printf("Timeout\n");
+        }
+
+        while (v4l2_xioctl(v4l2_fd, VIDIOC_DQBUF, &buf) == -1) {
+            switch (errno) {
+                case EAGAIN:
+                    continue;
+                default:
+                    printf("VIDIOC_DQBUF error\n");
+                return true;
+            }
+        }
+
         time_t t = time(NULL);
         struct tm *tm = localtime(&t);
         int j = 0;
         unsigned char bits = 0;
         unsigned short bitstream = 0;
         memset(hist, 0, 4096 * sizeof(unsigned int));
+        unsigned short * memmap_pix = (unsigned short *) membuf[buf.index].start;
         for (int i = 0; i < width * height; i++) {
             // Left justified 16 bit pixel
-            unsigned short pix_val = __bswap_16(raw_buf[i]) >> 4;
+            unsigned short pix_val = __bswap_16(*memmap_pix++) >> 4;
             hist[pix_val]++;
             raw_buf[i] = pix_val;
+        }
+        if (-1 == v4l2_xioctl(v4l2_fd, VIDIOC_QBUF, &buf)) {
+            printf("VIDIOC_QBUF error\n");
+            return -1;
         }
         int jpeg_size = lossless_jpg(raw_buf, out_buf, bitdepth, width, height);
 
@@ -124,16 +175,13 @@ int main(int argc, char **argv) {
             }
             set_exposure = true;
             printf("Set exposure %u\n", exposure_rows);
-            char v4l2_exp_cmd[64];
-            sprintf(v4l2_exp_cmd, "%s%u", V4L2_SET_EXP, exposure_rows);
-            FILE * v4l2_exec = popen(v4l2_exp_cmd, "r");
-            pclose(v4l2_exec);
-            exposure_rows = get_exposure_value();
+            v4l2_set_ctrl(v4l2_fd, V4L2_CID_EXPOSURE, exposure_rows);
+
+            v4l2_get_ctrl(v4l2_fd, V4L2_CID_EXPOSURE, &exposure_rows);
         } else {
             set_exposure = false;
         }
     }
-    pclose(v4l2_pipe);
     free(raw_buf);
     free(out_buf);
 
